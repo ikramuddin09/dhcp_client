@@ -18,16 +18,26 @@ def get_active_interface():
             return interface
     raise Exception("No active network interface found")
 
-# Function to create a virtual interface with a custom name
-def create_virtual_interface(original_interface, virtual_interface_name):
+# Function to create a virtual interface
+def create_virtual_interface(interface):
+    virtual_interface = f"{interface}_twgt"
     try:
-        os.system(f"sudo ip link add link {original_interface} name {virtual_interface_name} type macvlan")
-        os.system(f"sudo ip link set {virtual_interface_name} up")
-        logging.debug(f"Created virtual interface {virtual_interface_name} linked to {original_interface}")
-        return virtual_interface_name
+        os.system(f"sudo ip link add {virtual_interface} type dummy")
+        os.system(f"sudo ip link set {virtual_interface} up")
+        logging.debug(f"Created virtual interface {virtual_interface}")
+        return virtual_interface
     except Exception as e:
         logging.error(f"Failed to create virtual interface: {e}")
         raise
+
+# Function to remove a virtual interface
+def remove_virtual_interface(virtual_interface):
+    try:
+        os.system(f"sudo ip link set {virtual_interface} down")
+        os.system(f"sudo ip link del {virtual_interface}")
+        logging.debug(f"Removed virtual interface {virtual_interface}")
+    except Exception as e:
+        logging.error(f"Failed to remove virtual interface: {e}")
 
 # Function to change MAC address
 def change_mac_address(interface, mac_address):
@@ -38,9 +48,10 @@ def change_mac_address(interface, mac_address):
         logging.error(f"Failed to change MAC address: {e}")
 
 # Function to send DHCP discover and request
-def dhcp_request(interface, mac_address):
+def dhcp_request(virtual_interface, mac_address):
     try:
         conf.checkIPaddr = False  # Disable IP address checking
+        conf.iface = virtual_interface  # Use the virtual interface
         transaction_id = random.randint(1, 0xFFFFFFFF)
 
         logging.debug(f"Generated transaction ID: {transaction_id}")
@@ -52,10 +63,10 @@ def dhcp_request(interface, mac_address):
                         BOOTP(chaddr=bytes.fromhex(mac_address.replace(':', '')), xid=transaction_id) / \
                         DHCP(options=[("message-type", "discover"), "end"])
 
-        logging.debug(f"Sending DHCPDISCOVER on {interface} with MAC: {mac_address}")
+        logging.debug(f"Sending DHCPDISCOVER with MAC: {mac_address}")
 
         # Send DHCPDISCOVER and wait for DHCPOFFER
-        dhcp_offer = srp1(dhcp_discover, iface=interface, timeout=5, verbose=False)
+        dhcp_offer = srp1(dhcp_discover, timeout=5, verbose=False)
 
         if dhcp_offer is None:
             logging.warning(f"No DHCPOFFER received for MAC {mac_address}")
@@ -76,10 +87,10 @@ def dhcp_request(interface, mac_address):
                                      ("requested_addr", offered_ip),
                                      ("server_id", server_ip), "end"])
 
-        logging.debug(f"Sending DHCPREQUEST on {interface} for IP: {offered_ip} from server: {server_ip}")
+        logging.debug(f"Sending DHCPREQUEST for IP: {offered_ip} from server: {server_ip}")
 
         # Send DHCPREQUEST and wait for DHCPACK
-        dhcp_ack = srp1(dhcp_request, iface=interface, timeout=5, verbose=False)
+        dhcp_ack = srp1(dhcp_request, timeout=5, verbose=False)
 
         if dhcp_ack is None:
             logging.warning(f"No DHCPACK received for MAC {mac_address}")
@@ -139,15 +150,13 @@ def main():
         with open('mac_addresses.txt', 'r') as file:
             mac_addresses = [line.strip() for line in file.readlines()]
 
-        original_interface = get_active_interface()
-        logging.debug(f"Detected active interface: {original_interface}")
+        interface = get_active_interface()
+        logging.debug(f"Detected active interface: {interface}")
 
-        # Custom virtual interface name
-        virtual_interface = f"{original_interface}_twgt"
-        create_virtual_interface(original_interface, virtual_interface)
+        virtual_interface = create_virtual_interface(interface)
 
         for mac in mac_addresses:
-            logging.debug(f"Changing MAC address of virtual interface {virtual_interface} to {mac}")
+            logging.debug(f"Changing MAC address to {mac}")
             change_mac_address(virtual_interface, mac)
             params = dhcp_request(virtual_interface, mac)
             if params:
@@ -157,7 +166,7 @@ def main():
                 logging.warning(f"Failed to obtain IP for MAC {mac}")
             time.sleep(1)  # Wait for a short interval before the next request
 
-        # No removal of the virtual interface
+        remove_virtual_interface(virtual_interface)
     except Exception as e:
         logging.error(f"An error occurred in the main function: {e}")
 
