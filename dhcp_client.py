@@ -21,6 +21,12 @@ def get_active_interface():
 # Function to create a virtual interface with a custom name
 def create_virtual_interface(original_interface, virtual_interface_name):
     try:
+        # Check if the virtual interface already exists
+        interfaces = psutil.net_if_addrs()
+        if virtual_interface_name in interfaces:
+            logging.debug(f"Virtual interface {virtual_interface_name} already exists. Moving ahead...")
+            return virtual_interface_name
+
         os.system(f"sudo ip link add link {original_interface} name {virtual_interface_name} type macvlan")
         os.system(f"sudo ip link set {virtual_interface_name} up")
         logging.debug(f"Created virtual interface {virtual_interface_name} linked to {original_interface}")
